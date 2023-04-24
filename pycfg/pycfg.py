@@ -11,88 +11,129 @@ import re
 import astunparse
 import pygraphviz
 
+
 class CFGNode(dict):
+    # 用于为节点分配唯一ID的静态变量
     registry = 0
+    # 一个以registry为键，以CFGNode对象为值的字典
+    # 这允许你快速查找节点对象
     cache = {}
+    # 在DFS算法中访问节点时用的堆栈
     stack = []
+
     def __init__(self, parents=[], ast=None):
         assert type(parents) is list
+        # 当前结点的父结点列表
         self.parents = parents
+        # 在当前节点上调用的函数列表
         self.calls = []
+        # 当前节点的子节点的列表
         self.children = []
+        # 当前节点所对应的抽象语法树（AST）节点
         self.ast_node = ast
-        self.rid  = CFGNode.registry
+        # 代表节点唯一ID的变量
+        self.rid = CFGNode.registry
         CFGNode.cache[self.rid] = self
         CFGNode.registry += 1
 
+    # 返回该节点所对应的代码行的编号
+    # 如果没有行号，则返回 0
     def lineno(self):
         return self.ast_node.lineno if hasattr(self.ast_node, 'lineno') else 0
 
+    # 将一个节点表示为一个字符串
     def __str__(self):
         return "id:%d line[%d] parents: %s : %s" % (self.rid, self.lineno(), str([p.rid for p in self.parents]), self.source())
 
     def __repr__(self):
         return str(self)
 
+    # 添加子节点
     def add_child(self, c):
         if c not in self.children:
             self.children.append(c)
 
+    # 比较节点之间是否有相同的ID
     def __eq__(self, other):
         return self.rid == other.rid
 
     def __neq__(self, other):
         return self.rid != other.rid
 
+    # 设置父节点
     def set_parents(self, p):
         self.parents = p
 
+    # 添加父节点
     def add_parent(self, p):
         if p not in self.parents:
             self.parents.append(p)
 
+    # 添加多个父节点
     def add_parents(self, ps):
         for p in ps:
             self.add_parent(p)
 
+    # 添加被调用函数
     def add_calls(self, func):
         self.calls.append(func)
 
+    # 以字符串形式返回节点的代码
     def source(self):
         return astunparse.unparse(self.ast_node).strip()
 
+    # 以 JSON 形式返回节点的信息
     def to_json(self):
-        return {'id':self.rid, 'parents': [p.rid for p in self.parents], 'children': [c.rid for c in self.children], 'calls': self.calls, 'at':self.lineno() ,'ast':self.source()}
+        return {'id': self.rid, 'parents': [p.rid for p in self.parents], 'children': [c.rid for c in self.children], 'calls': self.calls, 'at': self.lineno(), 'ast': self.source()}
 
+    # 返回一个AGraph对象，它将所有节点表示成图
+    # arcs参数：接收一个要显示的边的列表。 你可以用这个参数添加行覆盖信息
+    # 每个节点的标签（label）包含行号和源代码，每个边缘的颜色取决于行覆盖信息
     @classmethod
     def to_graph(cls, arcs=[]):
+        # 为了将代码可视化为一张图，使节点重新命名，使它们看起来更好看
+        # 例如，将 '_if' 重命名为 'if'
         def unhack(v):
             for i in ['if', 'while', 'for', 'elif']:
                 v = re.sub(r'^_%s:' % i, '%s:' % i, v)
             return v
-        G = pygraphviz.AGraph(directed=True)
-        cov_lines = set(i for i,j in arcs)
+        G = pygraphviz.AGraph(directed=True)  # 给图进行初始化
+        cov_lines = set(i for i, j in arcs)
+        # 使用 CFGNode.cache.items() 获取所有的节点
+        # 将每个节点添加到图中，添加标签和边
         for nid, cnode in CFGNode.cache.items():
-            G.add_node(cnode.rid)
+            G.add_node(cnode.rid)  # 将每个节点添加到图
             n = G.get_node(cnode.rid)
             lineno = cnode.lineno()
+            # 对于每个节点，添加一个标签和一条边
+            # 标签包含该节点所代表的源代码的行号和语句
             n.attr['label'] = "%d: %s" % (lineno, unhack(cnode.source()))
+            # 给每个节点添加一条边，将其与父节点连接起来
             for pn in cnode.parents:
                 plineno = pn.lineno()
+                # 如果当前的父节点是函数的调用节点，并且当前节点不是调用节点的子节点，
+                # 则在该父节点和当前节点之间添加一条虚线，并进入下一次迭代。
                 if hasattr(pn, 'calllink') and pn.calllink > 0 and not hasattr(cnode, 'calleelink'):
                     G.add_edge(pn.rid, cnode.rid, style='dotted', weight=100)
                     continue
 
+                # 你可以在执行流程中检查测试覆盖率
+                # arcs是一组被执行的线的图元（tuple），我们根据 arcs，对边缘进行不同的着色
+                # 如果存在一个名为 arcs 的变量，并且满足以下条件之一（就是if语句），
+                # 则在其父节点和当前节点之间添加一条蓝色的边
                 if arcs:
-                    if  (plineno, lineno) in arcs:
+                    if (plineno, lineno) in arcs:
                         G.add_edge(pn.rid, cnode.rid, color='blue')
                     elif plineno == lineno and lineno in cov_lines:
                         G.add_edge(pn.rid, cnode.rid, color='blue')
-                    elif hasattr(cnode, 'fn_exit_node') and plineno in cov_lines:  # child is exit and parent is covered
+                    # child is exit and parent is covered
+                    elif hasattr(cnode, 'fn_exit_node') and plineno in cov_lines:
                         G.add_edge(pn.rid, cnode.rid, color='blue')
-                    elif hasattr(pn, 'fn_exit_node') and len(set(n.lineno() for n in pn.parents) | cov_lines) > 0: # parent is exit and one of its parents is covered.
+                    # parent is exit and one of its parents is covered.
+                    elif hasattr(pn, 'fn_exit_node') and len(set(n.lineno() for n in pn.parents) | cov_lines) > 0:
                         G.add_edge(pn.rid, cnode.rid, color='blue')
-                    elif plineno in cov_lines and hasattr(cnode, 'calleelink'): # child is a callee (has calleelink) and one of the parents is covered.
+                    # child is a callee (has calleelink) and one of the parents is covered.
+                    elif plineno in cov_lines and hasattr(cnode, 'calleelink'):
                         G.add_edge(pn.rid, cnode.rid, color='blue')
                     else:
                         G.add_edge(pn.rid, cnode.rid, color='red')
@@ -100,12 +141,15 @@ class CFGNode(dict):
                     G.add_edge(pn.rid, cnode.rid)
         return G
 
+
 class PyCFG:
     """
     The python CFG
     """
+
     def __init__(self):
-        self.founder = CFGNode(parents=[], ast=ast.parse('start').body[0]) # sentinel
+        self.founder = CFGNode(
+            parents=[], ast=ast.parse('start').body[0])  # sentinel
         self.founder.ast_node.lineno = 0
         self.functions = {}
         self.functions_node = {}
@@ -114,7 +158,8 @@ class PyCFG:
         return ast.parse(src)
 
     def walk(self, node, myparents):
-        if node is None: return
+        if node is None:
+            return
         fname = "on_%s" % node.__class__.__name__.lower()
         if hasattr(self, fname):
             fn = getattr(self, fname)
@@ -141,7 +186,8 @@ class PyCFG:
         -- 'simple' indicates that we annotate simple name without parens
         TODO: AnnAssign(expr target, expr annotation, expr? value, int simple)
         """
-        if len(node.targets) > 1: raise NotImplemented('Parallel assignments')
+        if len(node.targets) > 1:
+            raise NotImplemented('Parallel assignments')
 
         p = [CFGNode(parents=myparents, ast=node)]
         p = self.walk(node.value, p)
@@ -182,15 +228,17 @@ class PyCFG:
         return []
 
     def on_for(self, node, myparents):
-        #node.target in node.iter: node.body
-        _test_node = CFGNode(parents=myparents, ast=ast.parse('_for: True if %s else False' % astunparse.unparse(node.iter).strip()).body[0])
+        # node.target in node.iter: node.body
+        _test_node = CFGNode(parents=myparents, ast=ast.parse(
+            '_for: True if %s else False' % astunparse.unparse(node.iter).strip()).body[0])
         ast.copy_location(_test_node.ast_node, node)
 
         # we attach the label node here so that break can find it.
         _test_node.exit_nodes = []
         test_node = self.walk(node.iter, [_test_node])
 
-        extract_node = CFGNode(parents=[_test_node], ast=ast.parse('%s = %s.shift()' % (astunparse.unparse(node.target).strip(), astunparse.unparse(node.iter).strip())).body[0])
+        extract_node = CFGNode(parents=[_test_node], ast=ast.parse('%s = %s.shift()' % (
+            astunparse.unparse(node.target).strip(), astunparse.unparse(node.iter).strip())).body[0])
         ast.copy_location(extract_node.ast_node, _test_node.ast_node)
 
         # now we evaluate the body, one at a time.
@@ -203,10 +251,10 @@ class PyCFG:
 
         return _test_node.exit_nodes + test_node
 
-
     def on_while(self, node, myparents):
         # For a while, the earliest parent is the node.test
-        _test_node = CFGNode(parents=myparents, ast=ast.parse('_while: %s' % astunparse.unparse(node.test).strip()).body[0])
+        _test_node = CFGNode(parents=myparents, ast=ast.parse(
+            '_while: %s' % astunparse.unparse(node.test).strip()).body[0])
         ast.copy_location(_test_node.ast_node, node.test)
         _test_node.exit_nodes = []
         test_node = self.walk(node.test, [_test_node])
@@ -225,7 +273,8 @@ class PyCFG:
         return _test_node.exit_nodes + test_node
 
     def on_if(self, node, myparents):
-        _test_node = CFGNode(parents=myparents, ast=ast.parse('_if: %s' % astunparse.unparse(node.test).strip()).body[0])
+        _test_node = CFGNode(parents=myparents, ast=ast.parse(
+            '_if: %s' % astunparse.unparse(node.test).strip()).body[0])
         ast.copy_location(_test_node.ast_node, node.test)
         test_node = self.walk(node.test, [_test_node])
         g1 = test_node
@@ -261,7 +310,7 @@ class PyCFG:
             else:
                 raise Exception(str(type(node.func)))
             return mid
-                #mid = node.func.value.id
+            # mid = node.func.value.id
 
         p = myparents
         for a in node.args:
@@ -306,13 +355,15 @@ class PyCFG:
         args = node.args
         returns = node.returns
 
-        enter_node = CFGNode(parents=[], ast=ast.parse('enter: %s(%s)' % (node.name, ', '.join([a.arg for a in node.args.args])) ).body[0]) # sentinel
+        enter_node = CFGNode(parents=[], ast=ast.parse('enter: %s(%s)' % (
+            node.name, ', '.join([a.arg for a in node.args.args]))).body[0])  # sentinel
         enter_node.calleelink = True
         ast.copy_location(enter_node.ast_node, node)
-        exit_node = CFGNode(parents=[], ast=ast.parse('exit: %s(%s)' % (node.name, ', '.join([a.arg for a in node.args.args])) ).body[0]) # sentinel
+        exit_node = CFGNode(parents=[], ast=ast.parse('exit: %s(%s)' % (
+            node.name, ', '.join([a.arg for a in node.args.args]))).body[0])  # sentinel
         exit_node.fn_exit_node = True
         ast.copy_location(exit_node.ast_node, node)
-        enter_node.return_nodes = [] # sentinel
+        enter_node.return_nodes = []  # sentinel
 
         p = [enter_node]
         for n in node.body:
@@ -331,7 +382,8 @@ class PyCFG:
         return myparents
 
     def get_defining_function(self, node):
-        if node.lineno() in self.functions_node: return self.functions_node[node.lineno()]
+        if node.lineno() in self.functions_node:
+            return self.functions_node[node.lineno()]
         if not node.parents:
             self.functions_node[node.lineno()] = ''
             return ''
@@ -340,7 +392,7 @@ class PyCFG:
         return val
 
     def link_functions(self):
-        for nid,node in CFGNode.cache.items():
+        for nid, node in CFGNode.cache.items():
             if node.calls:
                 for calls in node.calls:
                     if calls in self.functions:
@@ -364,16 +416,15 @@ class PyCFG:
                             # passn.set_parents([exit])
                             # ast.copy_location(exit.ast_node, passn.ast_node)
 
-
                             # #for c in passn.children: c.add_parent(exit)
                             # #passn.ast_node = exit.ast_node
 
     def update_functions(self):
-        for nid,node in CFGNode.cache.items():
+        for nid, node in CFGNode.cache.items():
             _n = self.get_defining_function(node)
 
     def update_children(self):
-        for nid,node in CFGNode.cache.items():
+        for nid, node in CFGNode.cache.items():
             for p in node.parents:
                 p.add_child(node)
 
@@ -391,7 +442,8 @@ class PyCFG:
         self.update_functions()
         self.link_functions()
 
-def compute_dominator(cfg, start = 0, key='parents'):
+
+def compute_dominator(cfg, start=0, key='parents'):
     dominator = {}
     dominator[start] = {start}
     all_nodes = set(cfg.keys())
@@ -412,8 +464,10 @@ def compute_dominator(cfg, start = 0, key='parents'):
             dominator[n] = v
     return dominator
 
+
 def slurp(f):
-    with open(f, 'r') as f: return f.read()
+    with open(f, 'r') as f:
+        return f.read()
 
 
 def get_cfg(pythonfile):
@@ -421,13 +475,13 @@ def get_cfg(pythonfile):
     cfg.gen_cfg(slurp(pythonfile).strip())
     cache = CFGNode.cache
     g = {}
-    for k,v in cache.items():
+    for k, v in cache.items():
         j = v.to_json()
         at = j['at']
         parents_at = [cache[p].to_json()['at'] for p in j['parents']]
         children_at = [cache[c].to_json()['at'] for c in j['children']]
         if at not in g:
-            g[at] = {'parents':set(), 'children':set()}
+            g[at] = {'parents': set(), 'children': set()}
         # remove dummy nodes
         ps = set([p for p in parents_at if p != at])
         cs = set([c for c in children_at if c != at])
@@ -438,9 +492,11 @@ def get_cfg(pythonfile):
         g[at]['function'] = cfg.functions_node[v.lineno()]
     return (g, cfg.founder.ast_node.lineno, cfg.last_node.ast_node.lineno)
 
+
 def compute_flow(pythonfile):
-    cfg,first,last = get_cfg(pythonfile)
+    cfg, first, last = get_cfg(pythonfile)
     return cfg, compute_dominator(cfg, start=first), compute_dominator(cfg, start=last, key='children')
+
 
 if __name__ == '__main__':
     import json
@@ -448,19 +504,23 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('pythonfile', help='The python file to be analyzed')
-    parser.add_argument('-d','--dots', action='store_true', help='generate a dot file')
-    parser.add_argument('-c','--cfg', action='store_true', help='print cfg')
-    parser.add_argument('-x','--coverage', action='store', dest='coverage', type=str, help='branch coverage file')
-    parser.add_argument('-y','--ccoverage', action='store', dest='ccoverage', type=str, help='custom coverage file')
+    parser.add_argument('-d', '--dots', action='store_true',
+                        help='generate a dot file')
+    parser.add_argument('-c', '--cfg', action='store_true', help='print cfg')
+    parser.add_argument('-x', '--coverage', action='store',
+                        dest='coverage', type=str, help='branch coverage file')
+    parser.add_argument('-y', '--ccoverage', action='store',
+                        dest='ccoverage', type=str, help='custom coverage file')
     args = parser.parse_args()
     if args.dots:
         arcs = None
         if args.coverage:
             cdata = coverage.CoverageData()
             cdata.read_file(filename=args.coverage)
-            arcs = [(abs(i),abs(j)) for i,j in cdata.arcs(cdata.measured_files()[0])]
+            arcs = [(abs(i), abs(j))
+                    for i, j in cdata.arcs(cdata.measured_files()[0])]
         elif args.ccoverage:
-            arcs = [(i,j) for i,j in json.loads(open(args.ccoverage).read())]
+            arcs = [(i, j) for i, j in json.loads(open(args.ccoverage).read())]
         else:
             arcs = []
         cfg = PyCFG()
@@ -469,9 +529,7 @@ if __name__ == '__main__':
         g.draw(args.pythonfile + '.png', prog='dot')
         print(g.string(), file=sys.stderr)
     elif args.cfg:
-        cfg,first,last = get_cfg(args.pythonfile)
+        cfg, first, last = get_cfg(args.pythonfile)
         for i in sorted(cfg.keys()):
-            print(i,'parents:', cfg[i]['parents'], 'children:', cfg[i]['children'])
-
-
-
+            print(i, 'parents:', cfg[i]['parents'],
+                  'children:', cfg[i]['children'])
