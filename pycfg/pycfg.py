@@ -154,9 +154,12 @@ class PyCFG:
         self.functions = {}
         self.functions_node = {}
 
+    # 解析作为参数传递的源代码字符串并返回一个抽象语法树（AST）节点。
     def parse(self, src):
         return ast.parse(src)
 
+    # 递归地遍历 AST 节点，为每个节点类型调用函数。
+    # 如果该节点类型没有函数存在，则返回 myparents。
     def walk(self, node, myparents):
         if node is None:
             return
@@ -168,6 +171,8 @@ class PyCFG:
         else:
             return myparents
 
+    # 处理 module 节点，遍历 module 内的每个语句（stmt），调用 walk() 函数。
+    # 最后，它返回最后一条语句的父节点（myparents）。
     def on_module(self, node, myparents):
         """
         Module(stmt* body)
@@ -179,6 +184,8 @@ class PyCFG:
             p = self.walk(n, p)
         return p
 
+    # 处理 assign 节点，如果 target 列表的长度不是1，则引发 NotImplemented 异常。
+    # 否则，它将创建并返回一个以 value 节点为父节点的 CFGNode 对象。
     def on_assign(self, node, myparents):
         """
         Assign(expr* targets, expr value)
@@ -194,9 +201,12 @@ class PyCFG:
 
         return p
 
+   # 处理 pass 节点，它创建并返回一个以 myparents 为父母的 CFGNode 对象。
     def on_pass(self, node, myparents):
         return [CFGNode(parents=myparents, ast=node)]
 
+    # 处理 break 节点，用 exit_nodes 列表属性找到最接近的父节点，创建一个 CFGNode 对象，
+    # 将 myparents 作为其父节点，并将其添加到 exit_nodes 列表中。最后，它返回一个空列表。
     def on_break(self, node, myparents):
         parent = myparents[0]
         while not hasattr(parent, 'exit_nodes'):
@@ -212,6 +222,8 @@ class PyCFG:
         # break doesnt have immediate children
         return []
 
+    # 处理 continue 节点，通过 exit_nodes 列表属性找到最近的父节点，
+    # 创建一个 CFGNode 对象作为其父节点，并返回一个空列表。
     def on_continue(self, node, myparents):
         parent = myparents[0]
         while not hasattr(parent, 'exit_nodes'):
@@ -227,42 +239,60 @@ class PyCFG:
         # for the just next node
         return []
 
+    # 处理 for 节点
     def on_for(self, node, myparents):
         # node.target in node.iter: node.body
+        # 以 myparents 列表为父节点。有一个 AST 节点，将 node.iter 评估为 True 或 False 。
+        # _test_node 对象将代表重复的条件，直到循环的结束。
         _test_node = CFGNode(parents=myparents, ast=ast.parse(
             '_for: True if %s else False' % astunparse.unparse(node.iter).strip()).body[0])
         ast.copy_location(_test_node.ast_node, node)
 
         # we attach the label node here so that break can find it.
+        # 用于调用 walk 函数来评估 node.iter
         _test_node.exit_nodes = []
         test_node = self.walk(node.iter, [_test_node])
 
+        # 以 _test_node 作为它的父节点。有一个AST节点，将 node.target 分配给 node.iter 的下一个值。
+        # extract_node 对象负责分配 for 循环中使用的迭代变量的值。
         extract_node = CFGNode(parents=[_test_node], ast=ast.parse('%s = %s.shift()' % (
             astunparse.unparse(node.target).strip(), astunparse.unparse(node.iter).strip())).body[0])
         ast.copy_location(extract_node.ast_node, _test_node.ast_node)
 
         # now we evaluate the body, one at a time.
+        # 对于 node.body 中的每个句子，通过调用 self.walk 函数来执行它。
+        # walk 函数接收一个 p1 列表作为参数，其中包含了以前走过的节点。
+        # walk 函数创建一个新的节点，将其添加到以前走过的节点的 exit_nodes 属性中，并返回新节点的 exit_nodes 属性。
         p1 = [extract_node]
         for n in node.body:
             p1 = self.walk(n, p1)
 
         # the test node is looped back at the end of processing.
+        # 添加 _test_node 为 p1 的父节点。这将导致循环结束，并且再次检查 _test_node 的条件。
         _test_node.add_parents(p1)
 
         return _test_node.exit_nodes + test_node
 
+    # 处理 while 节点
     def on_while(self, node, myparents):
         # For a while, the earliest parent is the node.test
+        # _test_node 将被用来评估循环中的条件表达式。
+        # 其父节点被设置为当前节点的父节点（myparents）。
+        # ast 属性添加了一个 AST 节点，用于评估循环的条件表达式。这个 AST 节点是用 ast.parse() 函数创建的。
         _test_node = CFGNode(parents=myparents, ast=ast.parse(
             '_while: %s' % astunparse.unparse(node.test).strip()).body[0])
         ast.copy_location(_test_node.ast_node, node.test)
+        # exit_nodes 列表属性存储了循环退出时的节点。
         _test_node.exit_nodes = []
         test_node = self.walk(node.test, [_test_node])
 
         # we attach the label node here so that break can find it.
 
         # now we evaluate the body, one at a time.
+        # 设置第一个父节点（p1）来处理 _test_node 和 node.body 节点。
         p1 = test_node
+        # 迭代更新 p1 中的列表以处理 _test_node 和 node.body 节点。
+        # 在这种情况下，_test_node 被用来作为评估循环的条件表达式的节点。
         for n in node.body:
             p1 = self.walk(n, p1)
 
@@ -272,34 +302,51 @@ class PyCFG:
         # link label node back to the condition.
         return _test_node.exit_nodes + test_node
 
+    # 处理 if 节点
     def on_if(self, node, myparents):
+        # 测试节点 _test_node，父节点是 myparents，AST节点是一个 if 语句，表示测试节点的内容是执行条件测试语句。
+        # 将 node.test 作为测试语句，并将 AST 节点添加到 _test_node.ast_node
         _test_node = CFGNode(parents=myparents, ast=ast.parse(
             '_if: %s' % astunparse.unparse(node.test).strip()).body[0])
+        # 将测试节点的位置信息复制到源代码中的测试语句上
         ast.copy_location(_test_node.ast_node, node.test)
+        # 对测试节点进行遍历，得到测试节点的所有子节点，存储在 test_node 中
         test_node = self.walk(node.test, [_test_node])
+        # 对 if 语句的主体部分进行遍历，将遍历结果存储在 g1 中
         g1 = test_node
         for n in node.body:
             g1 = self.walk(n, g1)
+        # 对 if 语句的 else 部分进行遍历，将遍历结果存储在 g2 中
         g2 = test_node
         for n in node.orelse:
             g2 = self.walk(n, g2)
 
+        # 将 g1 和 g2 拼接起来，返回这个列表。这些节点将成为下一步控制流图的起始节点
         return g1 + g2
 
+    # 处理二元运算符表达式
+    # 将左右操作数（left和right）分别传递给 walk 函数进行处理
     def on_binop(self, node, myparents):
         left = self.walk(node.left, myparents)
         right = self.walk(node.right, left)
         return right
 
+    # 处理比较运算符表达式
+    # 将左操作数（left）和第一个比较器（comparators[0]）分别传递给 walk 函数进行处理
     def on_compare(self, node, myparents):
         left = self.walk(node.left, myparents)
         right = self.walk(node.comparators[0], left)
         return right
 
+    # 处理一元运算符表达式
+    # 将操作数（operand）传递给 walk 函数进行处理
     def on_unaryop(self, node, myparents):
         return self.walk(node.operand, myparents)
 
+    # 处理函数调用节点
     def on_call(self, node, myparents):
+        # 从函数调用节点中获取函数的名称。
+        # 根据节点的类型分别获取名称，如果节点的类型是 ast.Call，则递归调用该函数以获取函数名称。
         def get_func(node):
             if type(node.func) is ast.Name:
                 mid = node.func.id
@@ -313,28 +360,40 @@ class PyCFG:
             # mid = node.func.value.id
 
         p = myparents
+        # 对于每个函数调用的参数，使用 walk 函数递归地处理它们，
+        # 并将它们添加到变量 p 中。
         for a in node.args:
             p = self.walk(a, p)
+        # 调用 get_func 函数，获取函数名称并将其赋值给变量 mid
         mid = get_func(node)
+        # 将函数名称添加到父节点的函数调用列表中。
         myparents[0].add_calls(mid)
 
         # these need to be unlinked later if our module actually defines these
         # functions. Otherwsise we may leave them around.
         # during a call, the direct child is not the next
         # statement in text.
+        # 将 p 中的所有节点的 calllink 属性设置为 0，以便稍后删除它们
         for c in p:
             c.calllink = 0
         return p
 
+    # 处理表达式语句节点
     def on_expr(self, node, myparents):
         p = [CFGNode(parents=myparents, ast=node)]
+        # 遍历表达式值以计算其父节点
         return self.walk(node.value, p)
 
+    # 处理 return 节点
     def on_return(self, node, myparents):
+        # 获取最近的父节点
         parent = myparents[0]
 
+        # 调用 walk 函数处理 return 语句中的值
         val_node = self.walk(node.value, myparents)
         # on return look back to the function definition.
+        # 在 parent 中查找 return_nodes 属性，该属性是函数节点定义时创建的，用于记录所有的 return 语句节点。
+        # 如果没有找到该属性，则一直向上查找父节点，直到找到该属性为止。
         while not hasattr(parent, 'return_nodes'):
             parent = parent.parents[0]
         assert hasattr(parent, 'return_nodes')
@@ -342,6 +401,7 @@ class PyCFG:
         p = CFGNode(parents=val_node, ast=node)
 
         # make the break one of the parents of label node.
+        # 将新节点 p 加入 parent 的 return_nodes 列表中，表示该 return 语句的结束
         parent.return_nodes.append(p)
 
         # return doesnt have immediate children
