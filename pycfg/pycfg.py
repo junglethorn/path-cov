@@ -97,6 +97,7 @@ class CFGNode(dict):
             for i in ['if', 'while', 'for', 'elif']:
                 v = re.sub(r'^_%s:' % i, '%s:' % i, v)
             return v
+
         G = pygraphviz.AGraph(directed=True)  # 给图进行初始化
         cov_lines = set(i for i, j in arcs)
         # 使用 CFGNode.cache.items() 获取所有的节点
@@ -407,14 +408,15 @@ class PyCFG:
         # return doesnt have immediate children
         return []
 
+    # 处理 def 节点
     def on_functiondef(self, node, myparents):
-        # a function definition does not actually continue the thread of
-        # control flow
-        # name, args, body, decorator_list, returns
+        # a function definition does not actually continue the thread of control flow
+        # 函数名、参数、内容、装饰器、返回值
         fname = node.name
         args = node.args
         returns = node.returns
 
+        # 构造入口节点与出口节点
         enter_node = CFGNode(parents=[], ast=ast.parse('enter: %s(%s)' % (
             node.name, ', '.join([a.arg for a in node.args.args]))).body[0])  # sentinel
         enter_node.calleelink = True
@@ -425,23 +427,22 @@ class PyCFG:
         ast.copy_location(exit_node.ast_node, node)
         enter_node.return_nodes = []  # sentinel
 
+        # 遍历节点并进行连接
         p = [enter_node]
         for n in node.body:
             p = self.walk(n, p)
-
         for n in p:
             if n not in enter_node.return_nodes:
                 enter_node.return_nodes.append(n)
-
         for n in enter_node.return_nodes:
             exit_node.add_parent(n)
-
         self.functions[fname] = [enter_node, exit_node]
         self.functions_node[enter_node.lineno()] = fname
-
         return myparents
 
+    # 给定节点函数名
     def get_defining_function(self, node):
+        # 检查节点行号是否在function_node中
         if node.lineno() in self.functions_node:
             return self.functions_node[node.lineno()]
         if not node.parents:
@@ -451,43 +452,34 @@ class PyCFG:
         self.functions_node[node.lineno()] = val
         return val
 
+    # 连接函数调用
     def link_functions(self):
         for nid, node in CFGNode.cache.items():
+            # 检查函数调用
             if node.calls:
                 for calls in node.calls:
                     if calls in self.functions:
                         enter, exit = self.functions[calls]
                         enter.add_parent(node)
                         if node.children:
-                            # # until we link the functions up, the node
-                            # # should only have succeeding node in text as
-                            # # children.
-                            # assert(len(node.children) == 1)
-                            # passn = node.children[0]
-                            # # We require a single pass statement after every
-                            # # call (which means no complex expressions)
-                            # assert(type(passn.ast_node) == ast.Pass)
-
-                            # # unlink the call statement
                             assert node.calllink > -1
+                            # 当前节点包含一个函数调用，但还没有与该调用的返回值关联
                             node.calllink += 1
                             for i in node.children:
                                 i.add_parent(exit)
-                            # passn.set_parents([exit])
-                            # ast.copy_location(exit.ast_node, passn.ast_node)
 
-                            # #for c in passn.children: c.add_parent(exit)
-                            # #passn.ast_node = exit.ast_node
-
+    # 更新函数信息
     def update_functions(self):
         for nid, node in CFGNode.cache.items():
             _n = self.get_defining_function(node)
 
+    # 更新子节点信息
     def update_children(self):
         for nid, node in CFGNode.cache.items():
             for p in node.parents:
                 p.add_child(node)
 
+    # 产生cfg流程图
     def gen_cfg(self, src):
         """
         >>> i = PyCFG()
@@ -503,6 +495,7 @@ class PyCFG:
         self.link_functions()
 
 
+# deminator算法
 def compute_dominator(cfg, start=0, key='parents'):
     dominator = {}
     dominator[start] = {start}
@@ -511,6 +504,9 @@ def compute_dominator(cfg, start=0, key='parents'):
     for n in rem_nodes:
         dominator[n] = all_nodes
 
+    # 对于每个前驱节点，算法从其支配者集合中取出所有集合的交集，
+    # 并将该节点本身加入到其中，从而得到该节点的新的支配者集合。
+    # 如果该节点的支配者集合发生了变化，继续迭代直到不再发生变化。
     c = True
     while c:
         c = False
@@ -522,14 +518,17 @@ def compute_dominator(cfg, start=0, key='parents'):
             if dominator[n] != v:
                 c = True
             dominator[n] = v
+    # 返回一个字典，其中每个键值对表示一个节点及其对应的支配者集合
     return dominator
 
 
+# 接受文件名参数'f'
 def slurp(f):
     with open(f, 'r') as f:
         return f.read()
 
 
+# 控制流图生成器
 def get_cfg(pythonfile):
     cfg = PyCFG()
     cfg.gen_cfg(slurp(pythonfile).strip())
@@ -553,6 +552,7 @@ def get_cfg(pythonfile):
     return (g, cfg.founder.ast_node.lineno, cfg.last_node.ast_node.lineno)
 
 
+# 计算控制流支配与前驱支配关系
 def compute_flow(pythonfile):
     cfg, first, last = get_cfg(pythonfile)
     return cfg, compute_dominator(cfg, start=first), compute_dominator(cfg, start=last, key='children')
@@ -562,6 +562,7 @@ if __name__ == '__main__':
     import json
     import sys
     import argparse
+    # 获取命令行参数
     parser = argparse.ArgumentParser()
     parser.add_argument('pythonfile', help='The python file to be analyzed')
     parser.add_argument('-d', '--dots', action='store_true',
@@ -572,6 +573,7 @@ if __name__ == '__main__':
     parser.add_argument('-y', '--ccoverage', action='store',
                         dest='ccoverage', type=str, help='custom coverage file')
     args = parser.parse_args()
+    # 执行命令行指令
     if args.dots:
         arcs = None
         if args.coverage:
@@ -583,12 +585,14 @@ if __name__ == '__main__':
             arcs = [(i, j) for i, j in json.loads(open(args.ccoverage).read())]
         else:
             arcs = []
+        # 生成cfg图
         cfg = PyCFG()
         cfg.gen_cfg(slurp(args.pythonfile).strip())
         g = CFGNode.to_graph(arcs)
         g.draw(args.pythonfile + '.png', prog='dot')
         print(g.string(), file=sys.stderr)
     elif args.cfg:
+        # 输出cfg图
         cfg, first, last = get_cfg(args.pythonfile)
         for i in sorted(cfg.keys()):
             print(i, 'parents:', cfg[i]['parents'],
