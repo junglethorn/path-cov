@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-# Author: Rahul Gopinath <rahul.gopinath@cispa.saarland>
-# License: GPLv3
-"""
-PyCFG for Python MCI
-Use http://viz-js.com/ to view digraph output
-"""
-
 import ast
 import re
 import astunparse
@@ -144,9 +136,6 @@ class CFGNode(dict):
 
 
 class PyCFG:
-    """
-    The python CFG
-    """
 
     def __init__(self):
         self.founder = CFGNode(
@@ -164,29 +153,36 @@ class PyCFG:
     def walk(self, node, myparents):
         if node is None:
             return
+        # 根据当前节点的类名，生成一个要调用的函数名
+        # 例如，如果节点的类名是 Module,，fname 将存储 "on_module"。
         fname = "on_%s" % node.__class__.__name__.lower()
+        # 如果有一个与 fname 同名的属性（定义了一个与 on_module 同名的函数）
         if hasattr(self, fname):
             fn = getattr(self, fname)
+            # 例子，调用 on_module 函数
             v = fn(node, myparents)
             return v
         else:
             return myparents
 
-    # 处理 module 节点，遍历 module 内的每个语句（stmt），调用 walk() 函数。
-    # 最后，它返回最后一条语句的父节点（myparents）。
+    # 处理 module 节点
+    # 返回值是构建好的 CFG，它是一个由 CFGNode 对象组成的列表，
+    # 每个 CFGNode 对象代表一个语句或者一个基本块，它包含了该语句或基本块的所有信息，如语句的 AST 表示、父节点和子节点等
     def on_module(self, node, myparents):
         """
         Module(stmt* body)
         """
         # each time a statement is executed unconditionally, make a link from
         # the result to next statement
+        # 执行 Module 节点中的每一个子节点，即遍历 node.body 中的每个语句，并且将每个语句与其后面的语句连接起来
         p = myparents
+        # 调用 walk 函数来处理每个语句，并将处理的结果传递给下一个语句
         for n in node.body:
             p = self.walk(n, p)
         return p
 
-    # 处理 assign 节点，如果 target 列表的长度不是1，则引发 NotImplemented 异常。
-    # 否则，它将创建并返回一个以 value 节点为父节点的 CFGNode 对象。
+    # 处理赋值（assign）节点
+    # 返回一个以 value 节点为父节点的 CFGNode 对象
     def on_assign(self, node, myparents):
         """
         Assign(expr* targets, expr value)
@@ -194,24 +190,26 @@ class PyCFG:
         -- 'simple' indicates that we annotate simple name without parens
         TODO: AnnAssign(expr target, expr annotation, expr? value, int simple)
         """
+        # target: 位于赋值语句左边的变量的节点列表
         if len(node.targets) > 1:
             raise NotImplemented('Parallel assignments')
 
         p = [CFGNode(parents=myparents, ast=node)]
+        # value: 位于赋值语句右边的表达式的节点
         p = self.walk(node.value, p)
 
         return p
 
-   # 处理 pass 节点，它创建并返回一个以 myparents 为父母的 CFGNode 对象。
+   # 处理 pass 节点
+   # 返回一个以 myparents 为父母的 CFGNode 对象
     def on_pass(self, node, myparents):
         return [CFGNode(parents=myparents, ast=node)]
 
-    # 处理 break 节点，用 exit_nodes 列表属性找到最接近的父节点，创建一个 CFGNode 对象，
-    # 将 myparents 作为其父节点，并将其添加到 exit_nodes 列表中。最后，它返回一个空列表。
+    # 处理 break 节点
+    # exit_nodes: 当在一个循环语句中执行 break 或continue语句时，这个列表包含了该循环语句的终点信息。这个列表包含了该循环语句的所有路径的节点。
     def on_break(self, node, myparents):
         parent = myparents[0]
         while not hasattr(parent, 'exit_nodes'):
-            # we have ordered parents
             parent = parent.parents[0]
 
         assert hasattr(parent, 'exit_nodes')
@@ -223,13 +221,12 @@ class PyCFG:
         # break doesnt have immediate children
         return []
 
-    # 处理 continue 节点，通过 exit_nodes 列表属性找到最近的父节点，
-    # 创建一个 CFGNode 对象作为其父节点，并返回一个空列表。
+    # 处理 continue 节点
     def on_continue(self, node, myparents):
         parent = myparents[0]
         while not hasattr(parent, 'exit_nodes'):
-            # we have ordered parents
             parent = parent.parents[0]
+
         assert hasattr(parent, 'exit_nodes')
         p = CFGNode(parents=myparents, ast=node)
 
@@ -243,8 +240,8 @@ class PyCFG:
     # 处理 for 节点
     def on_for(self, node, myparents):
         # node.target in node.iter: node.body
-        # 以 myparents 列表为父节点。有一个 AST 节点，将 node.iter 评估为 True 或 False 。
         # _test_node 对象将代表重复的条件，直到循环的结束。
+        # 以 myparents 列表为父节点。有一个 AST 节点，将 node.iter 评估为 True 或 False 。
         _test_node = CFGNode(parents=myparents, ast=ast.parse(
             '_for: True if %s else False' % astunparse.unparse(node.iter).strip()).body[0])
         ast.copy_location(_test_node.ast_node, node)
@@ -305,7 +302,7 @@ class PyCFG:
 
     # 处理 if 节点
     def on_if(self, node, myparents):
-        # 测试节点 _test_node，父节点是 myparents，AST节点是一个 if 语句，表示测试节点的内容是执行条件测试语句。
+        # 测试节点 _test_node: 父节点是 myparents；AST节点是一个 if 语句，表示测试节点的内容是执行条件测试语句。
         # 将 node.test 作为测试语句，并将 AST 节点添加到 _test_node.ast_node
         _test_node = CFGNode(parents=myparents, ast=ast.parse(
             '_if: %s' % astunparse.unparse(node.test).strip()).body[0])
@@ -325,26 +322,26 @@ class PyCFG:
         # 将 g1 和 g2 拼接起来，返回这个列表。这些节点将成为下一步控制流图的起始节点
         return g1 + g2
 
-    # 处理二元运算符表达式
+    # 处理二元运算符
     # 将左右操作数（left和right）分别传递给 walk 函数进行处理
     def on_binop(self, node, myparents):
         left = self.walk(node.left, myparents)
         right = self.walk(node.right, left)
         return right
 
-    # 处理比较运算符表达式
+    # 处理比较运算符
     # 将左操作数（left）和第一个比较器（comparators[0]）分别传递给 walk 函数进行处理
     def on_compare(self, node, myparents):
         left = self.walk(node.left, myparents)
         right = self.walk(node.comparators[0], left)
         return right
 
-    # 处理一元运算符表达式
+    # 处理一元运算符
     # 将操作数（operand）传递给 walk 函数进行处理
     def on_unaryop(self, node, myparents):
         return self.walk(node.operand, myparents)
 
-    # 处理函数调用节点
+    # 处理函数调用（call）节点
     def on_call(self, node, myparents):
         # 从函数调用节点中获取函数的名称。
         # 根据节点的类型分别获取名称，如果节点的类型是 ast.Call，则递归调用该函数以获取函数名称。
