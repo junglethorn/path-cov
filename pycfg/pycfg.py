@@ -585,7 +585,7 @@ if __name__ == '__main__':
         # 生成cfg图
         cfg = PyCFG()
         cfg.gen_cfg(slurp(args.pythonfile).strip())
-        g = CFGNode.to_graph(arcs)
+        g = CFGNode.to_graph(arcs)  # 对 g 进行 DFS 搜索所有可能路径的数量
         g.draw(args.pythonfile + '.png', prog='dot')
         print(g.string(), file=sys.stderr)
     elif args.cfg:
