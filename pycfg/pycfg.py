@@ -554,6 +554,24 @@ def compute_flow(pythonfile):
     cfg, first, last = get_cfg(pythonfile)
     return cfg, compute_dominator(cfg, start=first), compute_dominator(cfg, start=last, key='children')
 
+# dfs深度优先
+def countpaths(graph,start,stop):
+    count = 0
+
+    def dfs(node, visited):
+        nonlocal count
+        if node == stop:
+            count += 1
+        for neighbor in graph.out_edges(node):
+            if neighbor[1] not in visited:
+                visited.add(node)
+                # print(visited)
+                dfs(neighbor[1],visited)
+                visited.remove(node)
+
+    visited = set()
+    dfs(start,visited)
+    return count
 
 if __name__ == '__main__':
     import json
@@ -588,6 +606,13 @@ if __name__ == '__main__':
         g = CFGNode.to_graph(arcs)  # 对 g 进行 DFS 搜索所有可能路径的数量
         g.draw(args.pythonfile + '.png', prog='dot')
         print(g.string(), file=sys.stderr)
+        print('-------------------------')
+
+        # dfs 深度优先
+        startnode = list(g.nodes())[0]
+        stopnode = list(g.nodes())[-1]
+        pathcount = countpaths(g, startnode, stopnode)
+        print("Total:", pathcount)
     elif args.cfg:
         # 输出cfg图
         cfg, first, last = get_cfg(args.pythonfile)
