@@ -7,14 +7,7 @@ def bubbleSort(arr):
                 arr[j], arr[j + 1] = arr[j + 1], arr[j]
 
 
-
-
-
-
 def divide(x, y):
-    if y == 0:
     return x / y
-
-
 
 

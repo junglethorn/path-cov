@@ -555,12 +555,12 @@ def compute_flow(pythonfile):
     return cfg, compute_dominator(cfg, start=first), compute_dominator(cfg, start=last, key='children')
 
 # dfs深度优先
-def countpaths(graph,start,stop):
+def countpaths(graph,start,stop,exitlist):
     count = 0
 
     def dfs(node, visited):
         nonlocal count
-        if node == stop:
+        if node == stop or node in exitlist:
             count += 1
         for neighbor in graph.out_edges(node):
             if neighbor[1] not in visited:
@@ -609,9 +609,23 @@ if __name__ == '__main__':
         print('-------------------------')
 
         # dfs 深度优先
+        enterlst=[]
+        exitlst=[]
+
+
+        for obj in g.nodes():
+            if ': enter' in obj.attr["label"]:
+                enterlst.append(obj.name)
+            if ': exit' in obj.attr["label"]:
+                exitlst.append(obj)
+
         startnode = list(g.nodes())[0]
         stopnode = list(g.nodes())[-1]
-        pathcount = countpaths(g, startnode, stopnode)
+        pathcount = countpaths(g, startnode, stopnode, exitlst)
+
+        for funcitem in enterlst:
+            pathcount *= countpaths(g, funcitem, stopnode, exitlst)
+
         print("Total:", pathcount)
     elif args.cfg:
         # 输出cfg图
