@@ -1,13 +1,23 @@
 import os
 
 
+# 语句分析
 class LineAnalyzer:
     # 检查前面6个字符是否为箭头
     def containsArrow(self, line):
         return line[0:6] == ">>>>>>"
 
+    def containsComment(self, line):
+        return line.lstrip().startswith("#")
+
     def isIf(self, line):
         return line.lstrip().startswith("if")
+
+    def isElif(self, line):
+        return line.lstrip().startswith("elif")
+
+    def isElse(self, line):
+        return line.lstrip().startswith("else")
 
     def isFor(self, line):
         return line.lstrip().startswith("for")
@@ -27,6 +37,7 @@ class LineAnalyzer:
         return count
 
 
+# cover 文件生成
 class CoverFileGenerator:
     def __init__(self, file):
         self.lines = []
@@ -51,6 +62,8 @@ class CoverFileGenerator:
             # 如果是箭头，则意味着该代码没有被执行，于是直接跳过
             if self.analyzer.containsArrow(line):
                 continue
+            if self.analyzer.containsComment(line):
+                continue
             # 如果是 def 语句，需要检查栈的元素
             if self.analyzer.isDef(line[7:]):
                 self.processDef()
@@ -61,6 +74,12 @@ class CoverFileGenerator:
                 continue
             # 对剩下的语句，直接压栈
             self.stack.append(line[7:])
+        # 最后检查栈中是否只有 def 语句（不考虑空行），如果是，则忽略加入 lines 链表里
+        if self.isStackOnlyContainsDef():
+            self.stack.clear()
+            return
+        self.lines = self.lines + self.stack
+        self.stack.clear()
 
     # 反复遍历 lines，直到不需要再次去做处理
     def repeatProcessing(self):
@@ -115,18 +134,54 @@ class CoverFileGenerator:
             del self.lines[index]
             self.shouldRepeat = True
 
-    # 遇到 if（for，while） 语句，通过比较 indent 去检查下行的有效性
+    # 遇到 if（for,while,else,elif） 语句，通过比较 indent 去检查下行的有效性
     def processNormal(self, index):
         if self.analyzer.isIf(self.lines[index]) == False:
-            return
-        if self.analyzer.isFor(self.lines[index]) == False:
-            return
-        if self.analyzer.isWhile(self.lines[index]) == False:
-            return
-        # 如果与下行的 indent 相等，意味着 if（for，while） 语句的执行部分是空的，于是删除
-        if self.compareBlankCount(index, index + 1) == 0:
+            if self.analyzer.isFor(self.lines[index]) == False:
+                if self.analyzer.isWhile(self.lines[index]) == False:
+                    if self.analyzer.isElse(self.lines[index]) == False:
+                        if self.analyzer.isElif(self.lines[index]) == False:
+                            return
+
+        # 如果遇到 else 语句
+        if self.analyzer.isElse(self.lines[index]):
+            # 则往上去比较是否有具备相同 indent 的 if 语句（即寻找是否存在对应的 if 语句）
+            search = index
+            while search >= 0:
+                search = search - 1
+                blankDiff = self.compareBlankCount(index, search)
+                # 如果 blankDiff = 0 且为 if 语句，说明上面有与 else 对应的 if 语句
+                # 因此，else 语句是可以存在的
+                if blankDiff == 0:
+                    if not self.analyzer.isIf(self.lines[search]):
+                        del self.lines[index]
+                        self.shouldRepeat = True
+                        break
+                    else:
+                        break
+
+        # 如果遇到 elif 语句，则往上去比较是否有具备相同 indent 的 if 语句（即寻找是否存在对应的 if 语句）
+        if self.analyzer.isElif(self.lines[index]):
+            search = index
+            while search >= 0:
+                search = search - 1
+                blankDiff = self.compareBlankCount(index, search)
+                # 如果 blankDiff = 0 且为 if 语句，说明上面有与 elif 对应的 if 语句
+                # 因此，elif 语句是可以存在的
+                if blankDiff == 0:
+                    if not self.analyzer.isIf(self.lines[search]):
+                        self.lines[index].replace('elif', 'if')
+                        # del self.lines[index]
+                        self.shouldRepeat = True
+                        break
+                    else:
+                        break
+
+        # 如果与下行的 indent 相等，意味着 if（for,while,else,elif） 语句的执行部分是空的，于是删除
+        if index + 1 < len(self.lines) and self.compareBlankCount(index, index + 1) == 0:
             del self.lines[index]
             self.shouldRepeat = True
+            return
 
     def compareBlankCount(self, index1, index2):
         return self.analyzer.getPreviousBlankCount(self.lines[index1]) - self.analyzer.getPreviousBlankCount(self.lines[index2])
@@ -142,6 +197,8 @@ def makeCoverFile(filename):
     file.close()
     outputFile.close()
 
+    # 删除原来的 .cover 文件
+    # os.remove("./%s.cover" % filename)
     # 删除额外生成的 packages._distutils_hack.__init__.cover 文件
     for f in os.listdir("./"):
         if "site-packages" in f:

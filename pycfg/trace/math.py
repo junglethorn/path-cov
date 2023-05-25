@@ -24,11 +24,17 @@ def divide(x, y):
 def max(x, y):
     if x < y:
         return y
-    if x > y:
+    elif x > y:
         return x
     if x == y:
         return x
 
 
 def min(x, y):
-    return x if x < y else y
+    if x < y:
+        return x
+    elif x > y:
+        if x == y:
+            return x
+        else:
+            return y
