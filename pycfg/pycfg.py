@@ -612,7 +612,6 @@ if __name__ == '__main__':
         enterlst=[]
         exitlst=[]
 
-
         for obj in g.nodes():
             if ': enter' in obj.attr["label"]:
                 enterlst.append(obj.name)

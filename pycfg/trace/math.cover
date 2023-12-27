@@ -1,0 +1,40 @@
+    1: def bubbleSort(arr):
+>>>>>>     n = len(arr)
+       
+>>>>>>     for i in range(n):
+>>>>>>         for j in range(0, n - i - 1):
+>>>>>>             if arr[j] > arr[j + 1]:
+>>>>>>                 arr[j], arr[j + 1] = arr[j + 1], arr[j]
+       
+       
+    1: def plus(x, y):
+>>>>>>     return x + y
+       
+       
+    1: def minus(x, y):
+>>>>>>     return x - y
+       
+       
+    1: def divide(x, y):
+    1:     if y == 0:
+>>>>>>         raise ZeroDivisionError
+    1:     return x / y
+       
+       
+    1: def max(x, y):
+    2:     if x < y:
+    1:         return y
+    1:     elif x > y:
+>>>>>>         return x
+    1:     if x == y:
+    1:         return x
+       
+       
+    1: def min(x, y):
+    2:     if x < y:
+    1:         return x
+    1:     elif x > y:
+    1:         if x == y:
+>>>>>>             return x
+               else:
+    1:             return y
